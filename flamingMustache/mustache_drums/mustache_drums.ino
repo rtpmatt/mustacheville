@@ -15,10 +15,18 @@
 */
 
 // Length of poofs in ms
-const int biggest  = 1000;
-const int big      = 600;
-const int small    = 300;
-const int smallest = 100;
+const int biggest  = 150;
+const int big      = 125;
+const int small    = 100;
+const int smallest = 75;
+
+// to try to cut out interference between drum pad sensors... we pause for a bit
+// after each hit.
+const int drumDelay = 100;
+
+const int poofLimit = 1000;
+const int poofLimitMultiplier = 3;
+unsigned long poofStart;
 
 // These set up various bits
 // of the random show.
@@ -91,9 +99,9 @@ PROGMEM prog_uint8_t programs[3][50] = { // these are stored in flash memory see
    },
 };
 
-prog_uint16_t butHistory[120][2]; // used to store button press history for easter eggs/replay
+prog_uint16_t butHistory[1][2]; // used to store button press history for easter eggs/replay
 unsigned int butHistoryIndex        = 0;
-const unsigned int maxHistoryLength = 120;
+const unsigned int maxHistoryLength = 1;
 
 // easter egg programs - stores easter egg programs
 // if the required buttons are (**pressed for shorter than
@@ -180,6 +188,10 @@ const int myButs[]      = {but1, but2, but3, but4, but5, but1};
 // for 5 button set up:
 // const int myButs[]      = {but1, but2, but3, but4, but5, but1};
 const int poofLengths[] = {smallest, small, big, biggest};
+
+int lastPoofs[] = {0,0,0,0,0,0};
+int poofThreshold = 6;
+
 
 /*
   poof() sends a signal to the relay to close
@@ -512,24 +524,84 @@ void playProgram(int p, boolean break_for_switch){
   the appropriate solenoids.
 */
 void checkButtons(){
-  checkResetHistory();
-  checkPlayHistory();
+  //checkResetHistory();
+  //checkPlayHistory();
   int pSols[6];
   int pSolsIndex = 0;
   int uSols[6];
   int uSolsIndex = 0;
+  //int length = 0;
+  int ulength = 0;
+  boolean punish = false;
   for (int i = 0; i < SOL_COUNT; i++) {
-    int val = analogRead(myButs[i]);
-    if(val < 500){
-       Serial.print(mySols[i]);
-       Serial.print(" value: ");
-       Serial.println(val);
+   int val = analogRead(myButs[i]);
+   if (punish){
+     uSols[uSolsIndex] = mySols[i];
+     uSolsIndex++;
+   }
+   else if (i != 0 && i !=5 && lastPoofs[i] && lastPoofs[i] <= poofThreshold){
+     if (lastPoofs[i] == poofThreshold){
+        lastPoofs[i] = 0; 
+     }
+     else{ 
+       lastPoofs[i]++;
+     }
+     Serial.print("lastpoofs: ");
+     Serial.println(lastPoofs[i]);
+   }
+   else if(val < 400 && val > 0){
+        Serial.print(mySols[i]);
+        Serial.print(" value: ");
+        Serial.println(val);
        //Serial.print("poof ");
        //Serial.println(mySols[i]);
        pSols[pSolsIndex] = mySols[i];
+       // only do shit to bass pedal
+       if (i == 0){
+         if (poofStart){
+           unsigned long length = (millis() - poofStart);
+           Serial.print("length: ");
+           Serial.println(length);
+           if (length > (poofLimit + 50)){ // if you release and come back we don't want to punish you.
+             poofStart = millis();
+           }
+           else if (length >= poofLimit){
+             punish = true;
+             uSols[uSolsIndex] = mySols[i];
+             uSolsIndex++;
+             poofStart = 0;
+             ulength = poofLimit * poofLimitMultiplier;
+           }
+         }
+         else{
+           poofStart = millis();
+           Serial.print("setting poofStart to:  ");
+           Serial.println(poofStart);
+         }
+       }
+       else{ // spplies to everything else
+        /*
+         if (val > 300){
+           length = poofLengths[0];
+         }
+         else if(val > 200){
+           length = poofLengths[1];
+         }
+         else if(val > 150){
+           length = poofLengths[2];
+         }
+         else{
+           length = poofLengths[3];
+         }
+        */
+       }
+       lastPoofs[i] = 1;
        pSolsIndex++;
     }
     else{
+       if (i == 0 || i == 5){
+         poofStart = 0; 
+       }
        if (!digitalRead(mySols[i])){
          //Serial.print("UNPOOF ");
          //Serial.println(mySols[i]);
@@ -544,9 +616,14 @@ void checkButtons(){
   if(pSolsIndex < SOL_COUNT){
     pSols[pSolsIndex] = 0;
   }
-  keepHistory(pSols);
-  unpoof(uSols, 0);
+  //keepHistory(pSols);
+  unpoof(uSols, ulength);
   poof(pSols, 0);
+  /*
+  if (pSolsIndex){
+    delay(drumDelay); 
+  }
+  */
 }
 
 /*
